@@ -3,13 +3,11 @@ import argparse
 import pprint
 import torch
 
-from adabound import AdaBound
-
-
 def get_optimizer(optimizer_name='Adam'):
     """Get optimizer by name"""
     # optimizer_name = optimizer_name.capitalize()
     if optimizer_name == 'AdaBound':
+        from adabound import AdaBound
         return AdaBound
     return getattr(torch.optim, optimizer_name)
 

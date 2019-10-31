@@ -92,14 +92,16 @@ class MelToLinear(object):
                         dtype=melspec.dtype, device=melspec.device)
         optim = torch.optim.LBFGS([X])
 
-        for _ in range(m):
+        n_steps = 32 # m
+        for i in range(n_steps):
             def step_func():
                 optim.zero_grad()
                 diff = melspec - X.matmul(self.fb)
                 loss = diff.pow(2).sum().mul(0.5)
                 loss.backward()
                 return loss
-            optim.step(step_func)
+            loss = optim.step(step_func).item()
+            print(f'Mel2Lin step {i+1}/{n_steps}: l={loss:.1e}')
 
         X.requires_grad_(False)
         return X.clamp(min=0).transpose(-1, -2)
@@ -166,7 +168,9 @@ class InverseSpectrogram(object):
         # And initialize the previous iterate to 0
         rebuilt = 0.
 
-        for _ in range(self.n_iter):
+        for i in range(self.n_iter):
+            print(f'Griffin-Lim iteration {i}/{self.n_iter}')
+
             # Store the previous iterate
             tprev = rebuilt
 
@@ -200,10 +204,13 @@ class InverseSpectrogram(object):
 if __name__ == "__main__":
     import librosa
     import matplotlib.pyplot as plt
-    x, sr = librosa.load(librosa.util.example_audio_file())
+    x, sr = librosa.load('yoiyoi_kokon.wav') #librosa.util.example_audio_file()
     l = len(x)
 
-    x = torch.from_numpy(x).to('cuda:0')
+    has_gpu = torch.cuda.is_available()
+    device = torch.device('gpu' if has_gpu else 'cpu')
+
+    x = torch.from_numpy(x).to(device)
     melscale = MelScale(sample_rate=sr, n_fft=1536, n_mels=256)
     spectrogram = Spectrogram(n_fft=1536, hop_length=256, win_length=1536, power=1)
     logamp = LogAmplitude()
@@ -217,7 +224,7 @@ if __name__ == "__main__":
     Z = Z.unsqueeze(0)
     linearamp = LinearAmplitude()
     meltolin = MelToLinear(sample_rate=sr, n_fft=1536, n_mels=256)
-    ispec = InverseSpectrogram(n_fft=1536, hop_length=256, win_length=1536, power=1, length=l)
+    ispec = InverseSpectrogram(n_fft=1536, hop_length=256, win_length=1536, power=1, length=l, n_iter=100)
     Y_hat = linearamp(Z)
     print(f'dB Error: {(Y_hat - Y).pow(2).mean()}')
     X_hat = meltolin(Y_hat)
@@ -226,4 +233,8 @@ if __name__ == "__main__":
     x_hat = ispec(X_hat)
     print(f'Spec Error: {(x_hat - x).pow(2).mean()}')
     for i in range(x_hat.size(0)):
-        librosa.output.write_wav(f'/home/jaeyeun/test_griffinlim_{i}.wav', x_hat[i, :].cpu().numpy(), sr=sr)
+        librosa.output.write_wav(f'test_griffinlim_{i}.wav', x_hat[i, :].cpu().numpy(), sr=sr)
+
+    # Fully differentiable Mel-Spectrogram inversion
+    print("TODO!")
+    
