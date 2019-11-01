@@ -1,7 +1,6 @@
 import torch
 import math
 
-from torch.autograd import Variable
 from torchaudio.functional import create_fb_matrix, istft, complex_norm
 from torchvision.transforms import Compose
 
@@ -152,7 +151,7 @@ class InverseMelSpectrogram(object):
         assert m == self.n_mels
 
         noise_initial = 1e-6 * torch.rand(self.n_samples)
-        x_hat = Variable(noise_initial, requires_grad=True).to(melspec.device)
+        x_hat = torch.tensor(noise_initial, requires_grad=True, device=melspec.device)
         
         melscale = MelScale(sample_rate=self.sample_rate, n_fft=self.n_fft, n_mels=self.n_mels)
         spectrogram = Spectrogram(n_fft=self.n_fft, hop_length=self.hop_length,
@@ -257,7 +256,7 @@ if __name__ == "__main__":
     l = len(x)
 
     has_gpu = torch.cuda.is_available()
-    device = torch.device('gpu' if has_gpu else 'cpu')
+    device = torch.device('cuda' if has_gpu else 'cpu')
 
     x = torch.from_numpy(x).to(device)
     melscale = MelScale(sample_rate=sr, n_fft=1536, n_mels=256)
