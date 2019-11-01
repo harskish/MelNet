@@ -1,6 +1,7 @@
 import torch
 import math
 
+from torch.autograd import Variable
 from torchaudio.functional import create_fb_matrix, istft, complex_norm
 from torchvision.transforms import Compose
 
@@ -130,8 +131,56 @@ class Spectrogram(object):
 
         if self.normalized:
             x /= self.window.pow(2).sum().sqrt()
-        return complex_norm(x).pow_(self.power)
+        return complex_norm(x).pow(self.power)
 
+class InverseMelSpectrogram(object):
+    """Invert Mel-scaled spectrogram through backpropagation"""
+    def __init__(self, n_samples, sample_rate,
+                n_fft=1536, n_mels=256, hop_length=256,
+                win_length=1536, power=1, n_iter=32):
+        self.n_samples = n_samples
+        self.sample_rate = sample_rate
+        self.n_fft = n_fft
+        self.n_mels = n_mels
+        self.hop_length = hop_length
+        self.win_length = win_length
+        self.power = power
+        self.n_iter = n_iter
+
+    def __call__(self, melspec):
+        b, k, m = melspec.size()  # b x time(k) x mel(m)
+        assert m == self.n_mels
+
+        noise_initial = 1e-6 * torch.rand(self.n_samples)
+        x_hat = Variable(noise_initial, requires_grad=True).to(melspec.device)
+        
+        melscale = MelScale(sample_rate=self.sample_rate, n_fft=self.n_fft, n_mels=self.n_mels)
+        spectrogram = Spectrogram(n_fft=self.n_fft, hop_length=self.hop_length,
+                                  win_length=self.win_length, power=self.power)
+        logamp = LogAmplitude()
+
+        optim = torch.optim.LBFGS([x_hat])
+        for i in range(self.n_iter):
+            def step_func():
+                optim.zero_grad()
+                X = spectrogram(x_hat)
+                Y = melscale(X)
+                Z = logamp(Y).unsqueeze(0)
+                
+                target_scaled = torch.expm1(melspec)
+                Z_scaled = torch.expm1(Z)
+
+                loss = torch.pow(Z_scaled - target_scaled, 2.0).mean()
+                loss.backward()
+
+                return loss
+            loss = optim.step(step_func).item()
+            print(f'Spectrogram inversion {i+1}/{self.n_iter}: l={loss:.4e}')
+
+        x_hat.requires_grad_(False)
+        return x_hat
+
+    
 
 class InverseSpectrogram(object):
     """Adaptation of the `librosa` implementation"""
@@ -222,6 +271,14 @@ if __name__ == "__main__":
     print(Z.mean())
     print(Z.var())
     Z = Z.unsqueeze(0)
+    
+    # Fully differentiable
+    imelspec = InverseMelSpectrogram(x.numel(), sr, n_iter=200)
+    waveform = imelspec(Z.clone().detach())
+    librosa.output.write_wav(f'test_autodiff_0.wav', waveform.cpu().numpy(), sr=sr)
+    print(f'Autodiff Spec Error: {(waveform - x).pow(2).mean()}')
+
+    # Griffin-Lim
     linearamp = LinearAmplitude()
     meltolin = MelToLinear(sample_rate=sr, n_fft=1536, n_mels=256)
     ispec = InverseSpectrogram(n_fft=1536, hop_length=256, win_length=1536, power=1, length=l, n_iter=100)
@@ -235,6 +292,3 @@ if __name__ == "__main__":
     for i in range(x_hat.size(0)):
         librosa.output.write_wav(f'test_griffinlim_{i}.wav', x_hat[i, :].cpu().numpy(), sr=sr)
 
-    # Fully differentiable Mel-Spectrogram inversion
-    print("TODO!")
-    
